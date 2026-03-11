@@ -1,8 +1,10 @@
 import { fetchWithProxy } from '../config/http';
+import { ingestAndClassifyNewsRawItem } from '../api/news-raw';
 import { getDomainKeywordConfig } from '../data/event-taxonomy';
 import { getActiveGdeltDomains } from '../data/news-sources';
 import type { FetchOptions, NewsCategory, NewsItem } from '../types';
 import { toId } from '../utils/hash';
+import { classifyDocumentTaxonomy } from '../utils/taxonomy-score';
 
 interface GdeltArticle {
   title?: string;
@@ -135,17 +137,35 @@ export async function fetchFromGdelt(
 
           const raw = (await response.json()) as GdeltResponse;
           const articles = raw.articles || [];
-          merged.push(
-            ...articles
-              .map((item, index) => toNewsItem(item, category, merged.length + index))
-              .filter((item) => item.title && item.link)
-          );
+          const newsItems = articles
+            .map((item, index) => toNewsItem(item, category, merged.length + index))
+            .filter((item) => item.title && item.link);
+
+          if (options?.ingestNewsRaw) {
+            for (const item of newsItems) {
+              await ingestAndClassifyNewsRawItem(item);
+            }
+          }
+
+          merged.push(...newsItems);
           break;
         }
       }
     }
 
-    return merged;
+    return merged.flatMap((item) => {
+      const taxonomy = classifyDocumentTaxonomy(
+        {
+          title: item.title,
+          summary: item.description || '',
+          body: item.body || ''
+        },
+        keywordConfig,
+        'gdelt'
+      );
+      if (!taxonomy.assigned) return [];
+      return [{ ...item, taxonomy }];
+    });
   } catch {
     return [];
   }

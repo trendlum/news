@@ -1,8 +1,10 @@
 import { fetchTextWithProxy } from '../config/http';
+import { ingestAndClassifyNewsRawItem } from '../api/news-raw';
 import { getDomainKeywordConfig } from '../data/event-taxonomy';
 import { getActiveRssFeeds } from '../data/news-sources';
-import type { FeedSource, FetchOptions, KeywordRule, NewsCategory, NewsItem } from '../types';
+import type { FeedSource, FetchOptions, NewsCategory, NewsItem } from '../types';
 import { toId } from '../utils/hash';
+import { classifyDocumentTaxonomy } from '../utils/taxonomy-score';
 import { cleanXmlValue } from '../utils/text';
 
 function extractTag(block: string, tag: string): string {
@@ -33,60 +35,6 @@ function parseDate(raw: string): number {
   return Number.isNaN(value) ? Date.now() : value;
 }
 
-function normalizeText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function matchesKeyword(text: string, rule: KeywordRule): boolean {
-  if (!text || !rule.keyword) return false;
-
-  const normalizedKeyword = normalizeText(rule.keyword);
-  if (!normalizedKeyword) return false;
-
-  if (rule.matchType === 'regex') {
-    try {
-      return new RegExp(rule.keyword, 'i').test(text);
-    } catch {
-      return false;
-    }
-  }
-
-  const normalizedText = normalizeText(text);
-  if (!normalizedText) return false;
-  const tokens = new Set(normalizedText.split(' ').filter(Boolean));
-  const keywordTokens = normalizedKeyword.split(' ').filter(Boolean);
-
-  if (rule.matchType === 'prefix') {
-    return keywordTokens.every((keyword) => [...tokens].some((token) => token.startsWith(keyword)));
-  }
-
-  if (keywordTokens.length === 1) {
-    const pattern = new RegExp(`\\b${escapeRegex(normalizedKeyword)}\\b`, 'i');
-    return pattern.test(normalizedText);
-  }
-
-  if (rule.matchType === 'exact') {
-    const pattern = new RegExp(`\\b${escapeRegex(normalizedKeyword)}\\b`, 'i');
-    return pattern.test(normalizedText);
-  }
-
-  return normalizedText.includes(normalizedKeyword);
-}
-
-function matchesCategory(text: string, rules: KeywordRule[]): boolean {
-  const normalizedText = normalizeText(text);
-  if (!normalizedText) return false;
-  return rules.some((rule) => matchesKeyword(normalizedText, rule));
-}
-
 function toNewsItem(
   block: string,
   category: NewsCategory,
@@ -97,6 +45,11 @@ function toNewsItem(
   const title = extractTag(block, 'title');
   const link = isAtom ? extractLinkFromAtom(block) : extractTag(block, 'link');
   const description = extractTag(block, 'description') || extractTag(block, 'summary');
+  const body =
+    extractTag(block, 'content:encoded') ||
+    extractTag(block, 'content') ||
+    extractTag(block, 'media:description') ||
+    description;
   const pubDate = isAtom ? extractTag(block, 'updated') || extractTag(block, 'published') : extractTag(block, 'pubDate');
   const timestamp = parseDate(pubDate);
 
@@ -108,6 +61,7 @@ function toNewsItem(
     link,
     source: feed.name,
     description,
+    body,
     pubDate,
     timestamp,
     category,
@@ -132,10 +86,18 @@ export async function fetchFromSingleRssFeed(
     const blocks = isAtom ? atomBlocks : itemBlocks;
     const maxItems = options?.maxItemsPerProvider ?? 30;
 
-    return blocks
+    const items = blocks
       .slice(0, maxItems)
       .map((block, index) => toNewsItem(block, category, feed, index, isAtom))
       .filter((item): item is NewsItem => item !== null);
+
+    if (options?.ingestNewsRaw) {
+      for (const item of items) {
+        await ingestAndClassifyNewsRawItem(item);
+      }
+    }
+
+    return items;
   } catch {
     return [];
   }
@@ -159,7 +121,18 @@ export async function fetchFromRssCategory(
   for (const result of settled) {
     if (result.status === 'fulfilled') merged.push(...result.value);
   }
-  return merged.filter((item) =>
-    matchesCategory(`${item.title} ${item.description || ''}`, keywordConfig.rssKeywordRules)
-  );
+
+  return merged.flatMap((item) => {
+    const taxonomy = classifyDocumentTaxonomy(
+      {
+        title: item.title,
+        summary: item.description || '',
+        body: item.body || ''
+      },
+      keywordConfig,
+      'rss'
+    );
+    if (!taxonomy.assigned) return [];
+    return [{ ...item, taxonomy }];
+  });
 }

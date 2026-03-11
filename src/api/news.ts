@@ -4,11 +4,12 @@ import { fetchFromRssCategory } from '../providers/rss';
 import type { CategoryNewsMap, FetchOptions, NewsCategory, NewsItem } from '../types';
 import { dedupeNews } from '../utils/dedupe';
 
-const DEFAULT_OPTIONS: Required<Pick<FetchOptions, 'maxItemsPerProvider' | 'maxItemsFinal' | 'useProxy' | 'timeoutMs'>> = {
+const DEFAULT_OPTIONS: Required<Pick<FetchOptions, 'maxItemsPerProvider' | 'maxItemsFinal' | 'useProxy' | 'timeoutMs' | 'ingestNewsRaw'>> = {
   maxItemsPerProvider: 30,
   maxItemsFinal: 50,
   useProxy: true,
-  timeoutMs: 15000
+  timeoutMs: 15000,
+  ingestNewsRaw: false
 };
 
 function mergeOptions(options?: FetchOptions): Required<FetchOptions> {
@@ -16,7 +17,8 @@ function mergeOptions(options?: FetchOptions): Required<FetchOptions> {
     maxItemsPerProvider: options?.maxItemsPerProvider ?? DEFAULT_OPTIONS.maxItemsPerProvider,
     maxItemsFinal: options?.maxItemsFinal ?? DEFAULT_OPTIONS.maxItemsFinal,
     useProxy: options?.useProxy ?? DEFAULT_OPTIONS.useProxy,
-    timeoutMs: options?.timeoutMs ?? DEFAULT_OPTIONS.timeoutMs
+    timeoutMs: options?.timeoutMs ?? DEFAULT_OPTIONS.timeoutMs,
+    ingestNewsRaw: options?.ingestNewsRaw ?? DEFAULT_OPTIONS.ingestNewsRaw
   };
 }
 

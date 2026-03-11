@@ -56,3 +56,81 @@ export async function fetchSupabaseRows<T>(cacheKey: string, path: string): Prom
   inFlight.set(cacheKey, task);
   return task;
 }
+
+function getSupabaseHeaders(): Record<string, string> | null {
+  const supabaseKey = getSupabaseKey();
+  if (!supabaseKey) return null;
+
+  return {
+    apikey: supabaseKey,
+    Authorization: `Bearer ${supabaseKey}`
+  };
+}
+
+export async function deleteSupabaseRows(path: string): Promise<void> {
+  const supabaseUrl = getSupabaseUrl();
+  const headers = getSupabaseHeaders();
+  if (!supabaseUrl || !headers) return;
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/${path}`, {
+    method: 'DELETE',
+    headers
+  });
+
+  if (!response.ok) {
+    throw new Error(`Supabase delete failed with HTTP ${response.status} for ${path}`);
+  }
+}
+
+export async function patchSupabaseRows<T>(path: string, payload: T): Promise<void> {
+  const supabaseUrl = getSupabaseUrl();
+  const headers = getSupabaseHeaders();
+  if (!supabaseUrl || !headers) return;
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/${path}`, {
+    method: 'PATCH',
+    headers: {
+      ...headers,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Supabase patch failed with HTTP ${response.status} for ${path}${body ? ` :: ${body}` : ''}`);
+  }
+}
+
+export async function upsertSupabaseRows<T>(table: string, rows: T[], onConflict: string): Promise<void> {
+  await upsertSupabaseRowsReturning(table, rows, onConflict);
+}
+
+export async function upsertSupabaseRowsReturning<TInput, TOutput = TInput>(
+  table: string,
+  rows: TInput[],
+  onConflict: string
+): Promise<TOutput[]> {
+  if (rows.length === 0) return [];
+
+  const supabaseUrl = getSupabaseUrl();
+  const headers = getSupabaseHeaders();
+  if (!supabaseUrl || !headers) return [];
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/${table}?on_conflict=${encodeURIComponent(onConflict)}`, {
+    method: 'POST',
+    headers: {
+      ...headers,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=representation'
+    },
+    body: JSON.stringify(rows)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Supabase upsert failed with HTTP ${response.status} for ${table}`);
+  }
+
+  const payload = (await response.json()) as TOutput[];
+  return Array.isArray(payload) ? payload : [];
+}
