@@ -1,7 +1,10 @@
 import type {
+  DetectedEntity,
+  DetectedEntityEvidence,
   DocumentTaxonomyClassification,
   DocumentTaxonomyInput,
   DomainKeywordConfig,
+  EntityKeywordRule,
   EventTypeKeywordConfig,
   KeywordRule,
   NewsProvider,
@@ -14,6 +17,7 @@ const HIGH_CONFIDENCE_WEIGHT = 3.5;
 const VERY_STRONG_WEIGHT = 4.5;
 const DECISIVE_WEIGHT = 4.8;
 const SUPPRESSED_MULTIPLIER = 0.2;
+const MAX_ENTITY_SIGNAL_BONUS = 2.5;
 
 type SourceField = 'title' | 'summary' | 'body';
 
@@ -114,9 +118,30 @@ function findRuleMatchInField(text: string, rule: KeywordRule): MatchEvidence | 
   };
 }
 
+function findEntityRuleMatchInField(text: string, rule: EntityKeywordRule): MatchEvidence | null {
+  return findRuleMatchInField(text, {
+    id: rule.id,
+    categoryId: -1,
+    keyword: rule.keyword,
+    matchType: rule.matchType,
+    weight: rule.weight
+  });
+}
+
 function findRuleMatch(fields: Record<SourceField, string>, rule: KeywordRule): MatchEvidence | null {
   for (const sourceField of ['title', 'summary', 'body'] as const) {
     const evidence = findRuleMatchInField(fields[sourceField], rule);
+    if (evidence) {
+      return { ...evidence, sourceField };
+    }
+  }
+
+  return null;
+}
+
+function findEntityRuleMatch(fields: Record<SourceField, string>, rule: EntityKeywordRule): MatchEvidence | null {
+  for (const sourceField of ['title', 'summary', 'body'] as const) {
+    const evidence = findEntityRuleMatchInField(fields[sourceField], rule);
     if (evidence) {
       return { ...evidence, sourceField };
     }
@@ -156,9 +181,96 @@ function isKeywordSuppressed(rule: KeywordRule, matchedRules: KeywordRule[]): bo
   });
 }
 
+export function detectDocumentEntities(input: string | DocumentTaxonomyInput, rules: EntityKeywordRule[]): DetectedEntity[] {
+  const fields = toInputFields(input);
+  const combinedText = [fields.title, fields.summary, fields.body].filter(Boolean).join(' ');
+  if (!combinedText || rules.length === 0) return [];
+
+  const uniqueRules = new Map<string, EntityKeywordRule>();
+  for (const rule of rules) {
+    const normalizedKeyword = normalizeText(rule.keyword);
+    if (!normalizedKeyword) continue;
+    const dedupeKey = `${rule.entityType}::${rule.canonicalName.trim().toLowerCase()}::${normalizedKeyword}::${rule.matchType}`;
+    const current = uniqueRules.get(dedupeKey);
+    if (!current || current.weight < rule.weight || (current.weight === rule.weight && current.id > rule.id)) {
+      uniqueRules.set(dedupeKey, rule);
+    }
+  }
+
+  const grouped = new Map<string, { entityType: EntityKeywordRule['entityType']; canonicalName: string; evidence: DetectedEntityEvidence[] }>();
+
+  for (const rule of uniqueRules.values()) {
+    const evidence = findEntityRuleMatch(fields, rule);
+    if (!evidence) continue;
+
+    const key = `${rule.entityType}::${rule.canonicalName.trim().toLowerCase()}`;
+    const current = grouped.get(key) ?? {
+      entityType: rule.entityType,
+      canonicalName: rule.canonicalName.trim(),
+      evidence: []
+    };
+
+    current.evidence.push({
+      entityKeywordId: rule.id,
+      matchedKeyword: rule.keyword,
+      matchType: rule.matchType,
+      weight: rule.weight,
+      matchedText: evidence.matchedText,
+      matchStart: evidence.matchStart,
+      matchEnd: evidence.matchEnd,
+      sourceField: evidence.sourceField
+    });
+    grouped.set(key, current);
+  }
+
+  return [...grouped.values()]
+    .map((group) => {
+      const sortedEvidence = [...group.evidence].sort((left, right) => right.weight - left.weight || left.entityKeywordId - right.entityKeywordId);
+      const totalWeight = Number(sortedEvidence.reduce((sum, item) => sum + item.weight, 0).toFixed(3));
+      const maxWeight = Number(Math.max(...sortedEvidence.map((item) => item.weight)).toFixed(3));
+      const sourceFields = [...new Set(sortedEvidence.map((item) => item.sourceField).filter((field): field is SourceField => field !== null))];
+      const matchedKeywords = [...new Set(sortedEvidence.map((item) => item.matchedKeyword))];
+      const keywordIds = [...new Set(sortedEvidence.map((item) => item.entityKeywordId))];
+
+      return {
+        entityType: group.entityType,
+        canonicalName: group.canonicalName,
+        totalWeight,
+        maxWeight,
+        matchCount: sortedEvidence.length,
+        keywordIds,
+        matchedKeywords,
+        sourceFields,
+        evidence: sortedEvidence
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.totalWeight - left.totalWeight ||
+        right.maxWeight - left.maxWeight ||
+        left.canonicalName.localeCompare(right.canonicalName) ||
+        left.entityType.localeCompare(right.entityType)
+    );
+}
+
+function computeEntitySignal(entities: DetectedEntity[]): number {
+  if (entities.length === 0) return 0;
+
+  const weightComponent = entities.reduce((sum, entity) => sum + Math.min(entity.totalWeight, 3), 0) * 0.2;
+  const diversityComponent = Math.min(entities.length, 4) * 0.15;
+  const prominenceComponent = entities.some((entity) => entity.sourceFields.includes('title'))
+    ? 0.35
+    : entities.some((entity) => entity.sourceFields.includes('summary'))
+      ? 0.2
+      : 0;
+
+  return Number(Math.min(MAX_ENTITY_SIGNAL_BONUS, weightComponent + diversityComponent + prominenceComponent).toFixed(3));
+}
+
 function buildCategoryScore(
   input: string | DocumentTaxonomyInput,
   rules: KeywordRule[],
+  detectedEntities: DetectedEntity[],
   categoryMeta: {
     categoryId: number;
     categorySlug: string;
@@ -172,6 +284,8 @@ function buildCategoryScore(
       ...categoryMeta,
       rawScore: 0,
       finalScore: 0,
+      entitySignalScore: 0,
+      detectedEntitiesCount: detectedEntities.length,
       matchedKeywordsCount: 0,
       strongKeywordsCount: 0,
       hasVeryStrongKeyword: false,
@@ -218,7 +332,8 @@ function buildCategoryScore(
   const distinctMatches = matches.length;
   const diversityBonus = computeDiversityBonus(distinctMatches);
   const strongSignalBonus = computeStrongSignalBonus(matches.map((match) => match.weight));
-  const finalScore = Number((filteredScore + diversityBonus + strongSignalBonus).toFixed(3));
+  const entitySignalScore = distinctMatches > 0 ? computeEntitySignal(detectedEntities) : 0;
+  const finalScore = Number((filteredScore + diversityBonus + strongSignalBonus + entitySignalScore).toFixed(3));
   const strongKeywordsCount = matches.filter((match) => match.weight >= HIGH_CONFIDENCE_WEIGHT).length;
   const hasVeryStrongKeyword = matches.some((match) => match.weight >= VERY_STRONG_WEIGHT);
   const hasDecisiveKeyword = matches.some((match) => match.weight >= DECISIVE_WEIGHT);
@@ -227,12 +342,15 @@ function buildCategoryScore(
     !allSignalsWeak &&
     ((finalScore >= 5 && strongKeywordsCount >= 1) ||
       (finalScore >= 7 && distinctMatches >= 2) ||
+      (finalScore >= 4.5 && distinctMatches >= 1 && detectedEntities.length > 0 && entitySignalScore >= 0.75) ||
       hasDecisiveKeyword);
 
   return {
     ...categoryMeta,
     rawScore,
     finalScore,
+    entitySignalScore,
+    detectedEntitiesCount: detectedEntities.length,
     matchedKeywordsCount: distinctMatches,
     strongKeywordsCount,
     hasVeryStrongKeyword,
@@ -246,16 +364,18 @@ export function classifyDocumentTaxonomy(
   config: DomainKeywordConfig,
   provider: NewsProvider = 'rss'
 ): DocumentTaxonomyClassification {
-  const eventTypeScores = scoreEventTypeConfigs(input, config.eventTypes, provider);
+  const eventTypeScores = scoreEventTypeConfigs(input, config.eventTypes, provider, config.entityKeywordRules);
   const assignedScores = eventTypeScores.filter((score) => score.assigned);
   const primary = assignedScores[0] ?? null;
   const domainScore = Number(assignedScores.reduce((sum, score) => sum + score.finalScore, 0).toFixed(3));
+  const detectedEntities = detectDocumentEntities(input, config.entityKeywordRules);
 
   return {
     primaryCategoryId: primary?.categoryId ?? null,
     primaryCategorySlug: primary?.categorySlug ?? null,
     domainScore,
     assigned: assignedScores.length > 0,
+    detectedEntities,
     eventTypeScores
   };
 }
@@ -263,15 +383,22 @@ export function classifyDocumentTaxonomy(
 export function scoreEventTypeConfigs(
   input: string | DocumentTaxonomyInput,
   eventTypes: EventTypeKeywordConfig[],
-  provider: 'rss' | 'gdelt' = 'rss'
+  provider: 'rss' | 'gdelt' = 'rss',
+  entityKeywordRules?: EntityKeywordRule[]
 ): TaxonomyCategoryScore[] {
+  const detectedEntities = detectDocumentEntities(input, entityKeywordRules ?? eventTypes[0]?.entityKeywordRules ?? []);
   return eventTypes
     .map((eventType) =>
-      buildCategoryScore(input, provider === 'gdelt' ? eventType.gdeltKeywordRules : eventType.rssKeywordRules, {
-        categoryId: eventType.category.id,
-        categorySlug: eventType.category.slug,
-        categoryLabel: eventType.category.label
-      })
+      buildCategoryScore(
+        input,
+        provider === 'gdelt' ? eventType.gdeltKeywordRules : eventType.rssKeywordRules,
+        detectedEntities,
+        {
+          categoryId: eventType.category.id,
+          categorySlug: eventType.category.slug,
+          categoryLabel: eventType.category.label
+        }
+      )
     )
     .sort((left, right) => right.finalScore - left.finalScore || right.rawScore - left.rawScore || left.categoryId - right.categoryId);
 }

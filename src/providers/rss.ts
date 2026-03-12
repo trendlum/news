@@ -1,5 +1,4 @@
 import { fetchTextWithProxy } from '../config/http';
-import { ingestAndClassifyNewsRawItem } from '../api/news-raw';
 import { getDomainKeywordConfig } from '../data/event-taxonomy';
 import { getActiveRssFeeds } from '../data/news-sources';
 import type { FeedSource, FetchOptions, NewsCategory, NewsItem } from '../types';
@@ -84,19 +83,9 @@ export async function fetchFromSingleRssFeed(
     const atomBlocks = itemBlocks.length === 0 ? parseItems(xml, 'entry') : [];
     const isAtom = itemBlocks.length === 0;
     const blocks = isAtom ? atomBlocks : itemBlocks;
-    const maxItems = options?.maxItemsPerProvider ?? 30;
-
     const items = blocks
-      .slice(0, maxItems)
       .map((block, index) => toNewsItem(block, category, feed, index, isAtom))
       .filter((item): item is NewsItem => item !== null);
-
-    if (options?.ingestNewsRaw) {
-      for (const item of items) {
-        await ingestAndClassifyNewsRawItem(item);
-      }
-    }
-
     return items;
   } catch {
     return [];

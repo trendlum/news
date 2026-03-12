@@ -1,31 +1,32 @@
-# News Module (GDELT + RSS)
+# News Pipeline
 
-Reusable TypeScript module to fetch and merge news from:
-- GDELT (JSON API)
-- Multiple RSS/Atom feeds
+Internal TypeScript pipeline for:
 
-## Structure
+- fetching news from GDELT and RSS
+- ingesting normalized records into `news_raw`
+- classifying stored records with taxonomy rules
 
-- `src/types.ts`: shared types
-- `src/config/feeds.ts`: categories, GDELT queries, RSS feeds
-- `src/config/http.ts`: proxy + timeout fetch helpers
-- `src/providers/gdelt.ts`: GDELT extractor
-- `src/providers/rss.ts`: RSS/Atom extractor
-- `src/utils/dedupe.ts`: deduplication logic
-- `src/api/news.ts`: aggregator entry points
-- `src/index.ts`: public exports
+## Manual Workflows
 
-## Quick Usage
+GitHub Actions is the operational entrypoint:
 
-```ts
-import { fetchCategoryNews, fetchAllNews } from './src/index';
+- `Fetch All News`
+- `Fetch Category News`
+- `Classify News Raw`
+- `Classify News Raw By Id`
 
-const politics = await fetchCategoryNews('politics');
-const all = await fetchAllNews();
+Workflow docs: `docs/github-actions-pipeline.md`
+
+## Local Commands
+
+```bash
+npm run check
+npm run check:public
+npm run run:news
+npm run run:news-raw
 ```
 
-## Notes
+## Required Environment Variables
 
-- This module assumes `fetch` is available (browser, SvelteKit, Node 18+).
-- CORS proxies are enabled by default for browser usage.
-- For server-only usage, set `useProxy: false` in options.
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`

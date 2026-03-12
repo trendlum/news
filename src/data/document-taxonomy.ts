@@ -1,4 +1,4 @@
-import type { NewsItem, TaxonomyCategoryScore } from '../types';
+import type { DetectedEntity, TaxonomyCategoryScore } from '../types';
 import { deleteSupabaseRows, upsertSupabaseRows } from './supabase';
 
 type PersistenceProvider = 'rss' | 'news_api' | 'crawler' | 'manual' | 'other' | 'x' | 'gdelt';
@@ -33,17 +33,25 @@ interface DocumentTaxonomyMatchRow {
   source_field: 'title' | 'summary' | 'body' | null;
 }
 
+interface NewsRawDetectedEntityRow {
+  news_raw_id: number;
+  entity_type: DetectedEntity['entityType'];
+  canonical_name: string;
+  total_weight: number;
+  max_weight: number;
+  match_count: number;
+  keyword_ids: number[];
+  matched_keywords: string[];
+  source_fields: Array<'title' | 'summary' | 'body'>;
+  first_matched_text: string | null;
+}
+
 export interface PersistableDocumentTaxonomy {
   documentId: number;
   provider: PersistenceProvider;
   primaryCategoryId: number | null;
   scores: TaxonomyCategoryScore[];
-}
-
-function toPersistenceProvider(provider: NewsItem['provider']): PersistenceProvider {
-  if (provider === 'rss') return 'rss';
-  if (provider === 'gdelt') return 'gdelt';
-  return 'other';
+  detectedEntities?: DetectedEntity[];
 }
 
 function toScoreRowsForDocument(document: PersistableDocumentTaxonomy): DocumentTaxonomyScoreRow[] {
@@ -84,30 +92,19 @@ function toMatchRowsForDocument(document: PersistableDocumentTaxonomy): Document
   );
 }
 
-function toScoreRows(items: NewsItem[]): DocumentTaxonomyScoreRow[] {
-  return items.flatMap((item) => {
-    if (!item.taxonomy) return [];
-    if (!item.newsRawId) return [];
-    return toScoreRowsForDocument({
-      documentId: item.newsRawId,
-      provider: toPersistenceProvider(item.provider),
-      primaryCategoryId: item.taxonomy.primaryCategoryId,
-      scores: item.taxonomy.eventTypeScores
-    });
-  });
-}
-
-function toMatchRows(items: NewsItem[]): DocumentTaxonomyMatchRow[] {
-  return items.flatMap((item) => {
-    if (!item.taxonomy) return [];
-    if (!item.newsRawId) return [];
-    return toMatchRowsForDocument({
-      documentId: item.newsRawId,
-      provider: toPersistenceProvider(item.provider),
-      primaryCategoryId: item.taxonomy.primaryCategoryId,
-      scores: item.taxonomy.eventTypeScores
-    });
-  });
+function toDetectedEntityRowsForDocument(document: PersistableDocumentTaxonomy): NewsRawDetectedEntityRow[] {
+  return (document.detectedEntities || []).map((entity) => ({
+    news_raw_id: document.documentId,
+    entity_type: entity.entityType,
+    canonical_name: entity.canonicalName,
+    total_weight: entity.totalWeight,
+    max_weight: entity.maxWeight,
+    match_count: entity.matchCount,
+    keyword_ids: entity.keywordIds,
+    matched_keywords: entity.matchedKeywords,
+    source_fields: entity.sourceFields,
+    first_matched_text: entity.evidence[0]?.matchedText || null
+  }));
 }
 
 async function replaceDocumentTaxonomyRows(document: PersistableDocumentTaxonomy): Promise<void> {
@@ -117,9 +114,11 @@ async function replaceDocumentTaxonomyRows(document: PersistableDocumentTaxonomy
   await deleteSupabaseRows(
     `document_taxonomy_scores?provider=eq.${encodeURIComponent(document.provider)}&document_id=eq.${encodeURIComponent(document.documentId)}`
   );
+  await deleteSupabaseRows(`news_raw_detected_entities?news_raw_id=eq.${encodeURIComponent(document.documentId)}`);
 
   const scoreRows = toScoreRowsForDocument(document);
   const matchRows = toMatchRowsForDocument(document);
+  const detectedEntityRows = toDetectedEntityRowsForDocument(document);
 
   await upsertSupabaseRows('document_taxonomy_scores', scoreRows, 'provider,document_id,taxonomy_category_id');
   await upsertSupabaseRows(
@@ -127,23 +126,11 @@ async function replaceDocumentTaxonomyRows(document: PersistableDocumentTaxonomy
     matchRows,
     'provider,document_id,taxonomy_category_id,keyword_id'
   );
-}
-
-export async function persistNewsTaxonomy(items: NewsItem[]): Promise<void> {
-  const classifiedItems = items.filter((item) => item.taxonomy);
-  if (classifiedItems.length === 0) return;
-
-  for (const item of classifiedItems) {
-    const taxonomy = item.taxonomy;
-    if (!taxonomy) continue;
-    if (!item.newsRawId) continue;
-    await replaceDocumentTaxonomyRows({
-      documentId: item.newsRawId,
-      provider: toPersistenceProvider(item.provider),
-      primaryCategoryId: taxonomy.primaryCategoryId,
-      scores: taxonomy.eventTypeScores
-    });
-  }
+  await upsertSupabaseRows(
+    'news_raw_detected_entities',
+    detectedEntityRows,
+    'news_raw_id,entity_type,canonical_name'
+  );
 }
 
 export async function persistDocumentTaxonomy(document: PersistableDocumentTaxonomy): Promise<void> {

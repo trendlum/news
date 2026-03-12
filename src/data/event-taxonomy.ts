@@ -1,5 +1,7 @@
 import type {
   DomainKeywordConfig,
+  EntityKeywordRule,
+  EventEntityKeywordRecord,
   EventTaxonomyCategoryRecord,
   EventTaxonomyKeywordRecord,
   EventTypeKeywordConfig,
@@ -10,6 +12,7 @@ import { fetchSupabaseRows } from './supabase';
 
 const TABLE_NAME = 'event_taxonomy_categories';
 const KEYWORDS_TABLE_NAME = 'event_taxonomy_keywords';
+const ENTITY_KEYWORDS_TABLE_NAME = 'event_entity_keywords';
 const MAX_GDELT_KEYWORDS = 8;
 
 function normalizeCategoryType(value: string): EventTaxonomyCategoryRecord['category_type'] | null {
@@ -53,10 +56,11 @@ async function getActiveEventTypeCategories(): Promise<EventTaxonomyCategoryReco
 }
 
 export async function getActiveEventTypeKeywordConfigs(): Promise<EventTypeKeywordConfig[]> {
-  const [domainCategories, eventTypeCategories, keywords] = await Promise.all([
+  const [domainCategories, eventTypeCategories, keywords, entityKeywordRules] = await Promise.all([
     getActiveDomainCategories(),
     getActiveEventTypeCategories(),
-    getActiveKeywords()
+    getActiveKeywords(),
+    getActiveEventEntityKeywordRules()
   ]);
 
   const sortedKeywords = [...keywords].sort((a, b) => b.weight - a.weight || a.id - b.id);
@@ -69,7 +73,8 @@ export async function getActiveEventTypeKeywordConfigs(): Promise<EventTypeKeywo
       category: eventType,
       parentCategory,
       rssKeywordRules: toKeywordRules(eventKeywords),
-      gdeltKeywordRules: toKeywordRules(eventKeywords.slice(0, MAX_GDELT_KEYWORDS))
+      gdeltKeywordRules: toKeywordRules(eventKeywords.slice(0, MAX_GDELT_KEYWORDS)),
+      entityKeywordRules
     };
   });
 }
@@ -100,6 +105,80 @@ async function getActiveKeywords(): Promise<EventTaxonomyKeywordRecord[]> {
     .filter((row): row is EventTaxonomyKeywordRecord => row !== null);
 }
 
+function normalizeEntityType(value: string): EventEntityKeywordRecord['entity_type'] | null {
+  const normalized = value.trim().toLowerCase();
+  const allowedEntityTypes: EventEntityKeywordRecord['entity_type'][] = [
+    'country',
+    'region',
+    'city',
+    'waterway',
+    'leader',
+    'political_party',
+    'military',
+    'international_organization',
+    'central_bank',
+    'stock_index',
+    'currency',
+    'rating_agency',
+    'company',
+    'bank',
+    'commodity',
+    'pipeline',
+    'port',
+    'airport',
+    'bridge',
+    'canal',
+    'data_center',
+    'satellite',
+    'space_agency',
+    'militia',
+    'terrorist_group',
+    'military_base',
+    'disease',
+    'virus',
+    'vaccine',
+    'health_agency',
+    'climate_event',
+    'natural_disaster'
+  ];
+
+  return allowedEntityTypes.includes(normalized as EventEntityKeywordRecord['entity_type'])
+    ? (normalized as EventEntityKeywordRecord['entity_type'])
+    : null;
+}
+
+async function getActiveEntityKeywords(): Promise<EventEntityKeywordRecord[]> {
+  const rows = await fetchSupabaseRows<
+    Omit<EventEntityKeywordRecord, 'entity_type' | 'match_type' | 'weight'> & {
+      entity_type: string;
+      match_type: string;
+      weight: string | number;
+    }
+  >(
+    'event-entity-keywords',
+    `${ENTITY_KEYWORDS_TABLE_NAME}?select=id,entity_type,canonical_name,keyword,match_type,weight,active,created_at&active=eq.true&order=weight.desc,id.asc`
+  );
+
+  return rows
+    .map((row) => {
+      const entityType = normalizeEntityType(row.entity_type);
+      const matchType = normalizeMatchType(row.match_type);
+      const canonicalName = row.canonical_name.trim();
+      const keyword = row.keyword.trim();
+      const weight = Number(row.weight);
+      if (!entityType || !matchType || !canonicalName || !keyword || Number.isNaN(weight)) return null;
+      return {
+        ...row,
+        entity_type: entityType,
+        canonical_name: canonicalName,
+        keyword,
+        match_type: matchType,
+        weight
+      };
+    })
+    .filter((row): row is EventEntityKeywordRecord => row !== null);
+}
+
 function uniqueKeywords(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))];
 }
@@ -116,11 +195,30 @@ function toKeywordRules(rows: EventTaxonomyKeywordRecord[]): KeywordRule[] {
     .filter((row) => row.keyword);
 }
 
+function toEntityKeywordRules(rows: EventEntityKeywordRecord[]): EntityKeywordRule[] {
+  return rows
+    .map((row) => ({
+      id: row.id,
+      entityType: row.entity_type,
+      canonicalName: row.canonical_name.trim(),
+      keyword: row.keyword.trim().toLowerCase(),
+      matchType: row.match_type,
+      weight: row.weight
+    }))
+    .filter((row) => row.canonicalName && row.keyword);
+}
+
+export async function getActiveEventEntityKeywordRules(): Promise<EntityKeywordRule[]> {
+  const rows = await getActiveEntityKeywords();
+  return toEntityKeywordRules(rows);
+}
+
 export async function getDomainKeywordConfig(category: NewsCategory): Promise<DomainKeywordConfig | null> {
-  const [domainCategories, eventTypeCategories, keywords] = await Promise.all([
+  const [domainCategories, eventTypeCategories, keywords, entityKeywordRules] = await Promise.all([
     getActiveDomainCategories(),
     getActiveEventTypeCategories(),
-    getActiveKeywords()
+    getActiveKeywords(),
+    getActiveEventEntityKeywordRules()
   ]);
 
   const domainCategory = domainCategories.find((row) => row.slug.trim().toLowerCase() === category);
@@ -134,6 +232,7 @@ export async function getDomainKeywordConfig(category: NewsCategory): Promise<Do
       eventTypes: [],
       rssKeywordRules: [],
       gdeltKeywordRules: [],
+      entityKeywordRules,
       rssKeywords: [],
       gdeltKeywords: []
     };
@@ -147,7 +246,8 @@ export async function getDomainKeywordConfig(category: NewsCategory): Promise<Do
       category: eventType,
       parentCategory: domainCategory,
       rssKeywordRules: toKeywordRules(eventKeywords),
-      gdeltKeywordRules: toKeywordRules(eventKeywords.slice(0, MAX_GDELT_KEYWORDS))
+      gdeltKeywordRules: toKeywordRules(eventKeywords.slice(0, MAX_GDELT_KEYWORDS)),
+      entityKeywordRules
     };
   });
   const rssKeywordRules = toKeywordRules(sortedKeywords);
@@ -160,6 +260,7 @@ export async function getDomainKeywordConfig(category: NewsCategory): Promise<Do
     eventTypes,
     rssKeywordRules,
     gdeltKeywordRules,
+    entityKeywordRules,
     rssKeywords,
     gdeltKeywords
   };

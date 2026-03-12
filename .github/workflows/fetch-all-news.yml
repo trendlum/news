@@ -1,0 +1,50 @@
+name: Fetch All News
+
+on:
+  workflow_dispatch:
+    inputs:
+      ingest_news_raw:
+        description: 'Persist fetched news into news_raw'
+        required: true
+        default: true
+        type: boolean
+      persist_taxonomy:
+        description: 'Persist taxonomy after fetch'
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: fetch-all-news-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fetch-all:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Public safety check
+        run: npm run check:public
+
+      - name: Fetch all categories
+        env:
+          INGEST_NEWS_RAW: ${{ inputs.ingest_news_raw }}
+          PERSIST_TAXONOMY: ${{ inputs.persist_taxonomy }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node --import tsx scripts/run.ts

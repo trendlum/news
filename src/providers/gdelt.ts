@@ -1,5 +1,4 @@
 import { fetchWithProxy } from '../config/http';
-import { ingestAndClassifyNewsRawItem } from '../api/news-raw';
 import { getDomainKeywordConfig } from '../data/event-taxonomy';
 import { getActiveGdeltDomains } from '../data/news-sources';
 import type { FetchOptions, NewsCategory, NewsItem } from '../types';
@@ -17,7 +16,7 @@ interface GdeltResponse {
   articles?: GdeltArticle[];
 }
 
-const GDELT_MIN_INTERVAL_MS = 5500;
+const GDELT_MIN_INTERVAL_MS = 4000;
 const GDELT_MAX_ATTEMPTS = 3;
 const GDELT_DOMAIN_CHUNK_SIZE = 3;
 const GDELT_KEYWORD_CHUNK_SIZE = 4;
@@ -41,6 +40,10 @@ function chunk<T>(items: T[], size: number): T[][] {
     chunks.push(items.slice(index, index + size));
   }
   return chunks;
+}
+
+function uniqueKeywords(keywords: string[]): string[] {
+  return [...new Set(keywords.map((keyword) => keyword.trim().toLowerCase()).filter(Boolean))];
 }
 
 function isJsonResponse(response: Response): boolean {
@@ -99,9 +102,8 @@ export async function fetchFromGdelt(
   const keywordConfig = await getDomainKeywordConfig(category).catch(() => null);
   if (!keywordConfig || keywordConfig.gdeltKeywordRules.length === 0) return [];
 
-  const maxItems = options?.maxItemsPerProvider ?? 30;
   const keywordGroups = chunk(
-    keywordConfig.gdeltKeywordRules.map((rule) => rule.keyword),
+    uniqueKeywords(keywordConfig.gdeltKeywordRules.map((rule) => rule.keyword)),
     GDELT_KEYWORD_CHUNK_SIZE
   );
   const domains = await getActiveGdeltDomains().catch(() => []);
@@ -118,7 +120,7 @@ export async function fetchFromGdelt(
         const fullQuery = `${query}${domainFilter} sourcelang:english`;
         const url =
           'https://api.gdeltproject.org/api/v2/doc/doc?' +
-          `query=${encodeURIComponent(fullQuery)}&timespan=7d&mode=artlist&maxrecords=${maxItems}&format=json&sort=date`;
+          `query=${encodeURIComponent(fullQuery)}&timespan=7d&mode=artlist&format=json&sort=date`;
 
         for (let attempt = 1; attempt <= GDELT_MAX_ATTEMPTS; attempt += 1) {
           await waitForGdeltSlot();
@@ -140,13 +142,6 @@ export async function fetchFromGdelt(
           const newsItems = articles
             .map((item, index) => toNewsItem(item, category, merged.length + index))
             .filter((item) => item.title && item.link);
-
-          if (options?.ingestNewsRaw) {
-            for (const item of newsItems) {
-              await ingestAndClassifyNewsRawItem(item);
-            }
-          }
-
           merged.push(...newsItems);
           break;
         }

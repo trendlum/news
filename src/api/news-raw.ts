@@ -1,16 +1,6 @@
-import { persistDocumentTaxonomy } from '../data/document-taxonomy';
-import { getActiveEventTypeKeywordConfigs } from '../data/event-taxonomy';
-import {
-  getNewsRawById,
-  getPendingNewsRaw,
-  getRecentNewsRaw,
-  replacePipelineNewsRawCategories,
-  updateNewsRawClassificationState,
-  upsertFetchedNewsRawItems
-} from '../data/news-raw';
-import type { NewsItem, NewsRawCategoryAssignment, NewsRawRecord } from '../types';
-import { fetchArticleContent } from '../utils/article-content';
-import { scoreEventTypeConfigs } from '../utils/taxonomy-score';
+import { upsertFetchedNewsRawItems } from '../data/news-raw';
+import type { NewsItem, NewsRawRecord } from '../types';
+import { classifyNewsRawItem, classifyPendingNewsRaw, classifyRecentNewsRaw } from './news-raw-classification';
 
 const ingestedNewsRawByUrl = new Map<string, NewsRawRecord | null>();
 const inFlightIngestionsByUrl = new Map<string, Promise<NewsRawRecord | null>>();
@@ -19,7 +9,18 @@ function normalizeNewsUrl(url: string): string {
   return url.trim();
 }
 
+function hasSufficientInlineContent(item: NewsItem): boolean {
+  const bodyLength = (item.body || '').trim().length;
+  const descriptionLength = (item.description || '').trim().length;
+  return bodyLength >= 1200 || (bodyLength >= 600 && descriptionLength >= 160);
+}
+
 async function enrichNewsItemBody(item: NewsItem): Promise<NewsItem> {
+  if (hasSufficientInlineContent(item)) {
+    return item;
+  }
+
+  const { fetchArticleContent } = await import('../utils/article-content');
   const article = await fetchArticleContent(item.link, {
     useProxy: true,
     timeoutMs: 12000
@@ -33,71 +34,7 @@ async function enrichNewsItemBody(item: NewsItem): Promise<NewsItem> {
   };
 }
 
-function clampConfidence(value: number): number {
-  return Math.max(0, Math.min(1, value));
-}
-
-function toConfidence(finalScore: number): number {
-  // Keep a simple monotonic mapping for the app layer while preserving raw/final scores in the trace tables.
-  return Number(clampConfidence(finalScore / 10).toFixed(4));
-}
-
-export async function classifyNewsRawItem(newsRawId: number): Promise<void> {
-  const item = await getNewsRawById(newsRawId);
-  if (!item) return;
-
-  try {
-    const eventTypeConfigs = await getActiveEventTypeKeywordConfigs();
-    const scores = scoreEventTypeConfigs(
-      {
-        title: item.title,
-        summary: item.summary,
-        body: item.body
-      },
-      eventTypeConfigs,
-      item.ingestion_provider === 'gdelt' ? 'gdelt' : 'rss'
-    );
-    const assignedScores = scores.filter((score) => score.assigned);
-    const primaryCategoryId = assignedScores[0]?.categoryId ?? null;
-
-    await persistDocumentTaxonomy({
-      documentId: item.id,
-      provider: item.ingestion_provider === 'gdelt' ? 'gdelt' : item.source_type,
-      primaryCategoryId,
-      scores
-    });
-
-    const assignments: NewsRawCategoryAssignment[] = assignedScores.map((score) => ({
-      news_raw_id: item.id,
-      category_id: score.categoryId,
-      confidence: toConfidence(score.finalScore),
-      is_primary: score.categoryId === primaryCategoryId,
-      assigned_by: 'pipeline'
-    }));
-
-    await replacePipelineNewsRawCategories(item.id, assignments);
-    await updateNewsRawClassificationState(item.id, assignedScores.length > 0 ? 'classified' : 'unclassified');
-  } catch (error) {
-    await updateNewsRawClassificationState(item.id, 'error');
-    throw error;
-  }
-}
-
-export async function classifyRecentNewsRaw(limit = 50): Promise<void> {
-  const items = await getRecentNewsRaw(limit);
-  for (const item of items) {
-    await classifyNewsRawItem(item.id);
-  }
-}
-
-export async function classifyPendingNewsRaw(limit = 50): Promise<void> {
-  const items = await getPendingNewsRaw(limit);
-  for (const item of items) {
-    await classifyNewsRawItem(item.id);
-  }
-}
-
-export async function ingestAndClassifyNewsRawItem(item: NewsItem): Promise<NewsRawRecord | null> {
+export async function ingestNewsRawItem(item: NewsItem): Promise<NewsRawRecord | null> {
   const normalizedUrl = normalizeNewsUrl(item.link);
   if (!normalizedUrl) return null;
 
@@ -115,7 +52,6 @@ export async function ingestAndClassifyNewsRawItem(item: NewsItem): Promise<News
       return null;
     }
 
-    await classifyNewsRawItem(persistedItem.id);
     ingestedNewsRawByUrl.set(normalizedUrl, persistedItem);
     return persistedItem;
   })().finally(() => {
@@ -126,10 +62,26 @@ export async function ingestAndClassifyNewsRawItem(item: NewsItem): Promise<News
   return task;
 }
 
-export async function ingestAndClassifyNewsRawItems(items: NewsItem[]): Promise<NewsRawRecord[]> {
+export async function ingestNewsRawItems(items: NewsItem[]): Promise<NewsRawRecord[]> {
   const dedupedItems = [...new Map(items.map((item) => [normalizeNewsUrl(item.link), item] as const)).values()].filter(
     (item) => normalizeNewsUrl(item.link)
   );
-  const persistedItems = await Promise.all(dedupedItems.map((item) => ingestAndClassifyNewsRawItem(item)));
+  const persistedItems = await Promise.all(dedupedItems.map((item) => ingestNewsRawItem(item)));
   return persistedItems.filter((item): item is NewsRawRecord => item !== null);
+}
+
+export async function ingestAndClassifyNewsRawItem(item: NewsItem): Promise<NewsRawRecord | null> {
+  const persistedItem = await ingestNewsRawItem(item);
+  if (!persistedItem) return null;
+
+  await classifyNewsRawItem(persistedItem.id);
+  return persistedItem;
+}
+
+export async function ingestAndClassifyNewsRawItems(items: NewsItem[]): Promise<NewsRawRecord[]> {
+  const persistedItems = await ingestNewsRawItems(items);
+  for (const item of persistedItems) {
+    await classifyNewsRawItem(item.id);
+  }
+  return persistedItems;
 }

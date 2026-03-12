@@ -1,0 +1,53 @@
+name: Classify News Raw
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Classification mode'
+        required: true
+        default: pending
+        type: choice
+        options:
+          - pending
+          - recent
+      limit:
+        description: 'Rows to classify'
+        required: true
+        default: '50'
+        type: string
+
+concurrency:
+  group: classify-news-raw-${{ github.ref }}-${{ inputs.mode }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Public safety check
+        run: npm run check:public
+
+      - name: Classify batch
+        env:
+          NEWS_RAW_MODE: ${{ inputs.mode }}
+          NEWS_RAW_LIMIT: ${{ inputs.limit }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node --import tsx scripts/classify-news-raw.ts
