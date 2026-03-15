@@ -30,8 +30,6 @@ interface NewsRawInsertRow {
   author: string | null;
   published_at: string | null;
   language_code: string | null;
-  classification_status?: 'pending' | 'classified' | 'unclassified' | 'error' | null;
-  classified_at?: string | null;
   raw: unknown;
 }
 
@@ -177,8 +175,6 @@ export async function upsertFetchedNewsRawItems(items: NewsItem[]): Promise<News
     author: null,
     published_at: toPublishedAt(item),
     language_code: null,
-    classification_status: 'pending',
-    classified_at: null,
     raw: {
       provider: item.provider,
       source: item.source,

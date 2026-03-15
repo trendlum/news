@@ -34,6 +34,15 @@ function shouldIngestNewsRaw(): boolean {
   return ['1', 'true', 'yes'].includes((process.env.INGEST_NEWS_RAW || '').trim().toLowerCase());
 }
 
+function shouldFailOnEmptyResults(): boolean {
+  return ['1', 'true', 'yes'].includes((process.env.FAIL_ON_EMPTY_RESULTS || '').trim().toLowerCase());
+}
+
+function getMinFetchedItems(): number {
+  const raw = Number((process.env.MIN_FETCHED_ITEMS || '0').trim());
+  return Number.isInteger(raw) && raw > 0 ? raw : 0;
+}
+
 async function persistFetchedItems(items: NewsItem[]): Promise<void> {
   if (!shouldIngestNewsRaw()) return;
 
@@ -59,6 +68,8 @@ function printCategory(title: string, items: NewsItem[]): void {
 async function main(): Promise<void> {
   const categories = await getActiveNewsCategories();
   const argCategory = process.argv[2] as NewsCategory | 'all' | undefined;
+  const failOnEmptyResults = shouldFailOnEmptyResults();
+  const minFetchedItems = getMinFetchedItems();
 
   if (argCategory && argCategory !== 'all') {
     const items = await fetchCategoryNews(argCategory, {
@@ -66,6 +77,9 @@ async function main(): Promise<void> {
       maxItemsFinal: 40,
       timeoutMs: 12000
     });
+    if (failOnEmptyResults && items.length < Math.max(1, minFetchedItems)) {
+      throw new Error(`Fetch for category "${argCategory}" returned ${items.length} items`);
+    }
     await persistFetchedItems(items);
     printCategory(argCategory, items);
     return;
@@ -78,6 +92,9 @@ async function main(): Promise<void> {
   });
 
   const flatItems = categories.flatMap((category) => all[category]);
+  if (failOnEmptyResults && flatItems.length < Math.max(1, minFetchedItems)) {
+    throw new Error(`Fetch returned ${flatItems.length} items across ${categories.length} categories`);
+  }
   await persistFetchedItems(flatItems);
 
   categories.forEach((category) => {

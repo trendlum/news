@@ -15,7 +15,7 @@ GitHub Actions is the operational entrypoint:
 - `Classify News Raw`
 - `Classify News Raw By Id`
 
-Workflow docs: `docs/github-actions-pipeline.md`
+`Fetch All News` also runs automatically every 15 minutes. Scheduled runs ingest into `news_raw`, fail if the fetch returns no items, and then classify a pending batch.
 
 ## Local Commands
 
@@ -29,4 +29,4 @@ npm run run:news-raw
 ## Required Environment Variables
 
 - `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_KEY`

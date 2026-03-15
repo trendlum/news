@@ -1,6 +1,8 @@
 name: Fetch All News
 
 on:
+  schedule:
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       ingest_news_raw:
@@ -43,8 +45,42 @@ jobs:
 
       - name: Fetch all categories
         env:
-          INGEST_NEWS_RAW: ${{ inputs.ingest_news_raw }}
-          PERSIST_TAXONOMY: ${{ inputs.persist_taxonomy }}
+          INGEST_NEWS_RAW: ${{ github.event_name == 'schedule' && 'true' || inputs.ingest_news_raw }}
+          PERSIST_TAXONOMY: ${{ github.event_name == 'schedule' && 'false' || inputs.persist_taxonomy }}
+          FAIL_ON_EMPTY_RESULTS: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
+          MIN_FETCHED_ITEMS: ${{ github.event_name == 'schedule' && '1' || '0' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: node --import tsx scripts/run.ts
+
+  classify-scheduled:
+    if: github.event_name == 'schedule'
+    needs: fetch-all
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Public safety check
+        run: npm run check:public
+
+      - name: Classify pending batch
+        env:
+          NEWS_RAW_MODE: pending
+          NEWS_RAW_LIMIT: 200
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: node --import tsx scripts/classify-news-raw.ts

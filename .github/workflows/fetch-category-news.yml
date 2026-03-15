@@ -50,5 +50,5 @@ jobs:
           INGEST_NEWS_RAW: ${{ inputs.ingest_news_raw }}
           PERSIST_TAXONOMY: ${{ inputs.persist_taxonomy }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: node --import tsx scripts/run.ts "${{ inputs.category }}"
