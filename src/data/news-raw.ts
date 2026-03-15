@@ -95,12 +95,21 @@ export async function getRecentNewsRaw(limit = 50): Promise<NewsRawRecord[]> {
 }
 
 export async function getPendingNewsRaw(limit = 50): Promise<NewsRawRecord[]> {
-  const windowSize = Math.max(limit * 5, 100);
-  const recentItems = await getRecentNewsRaw(windowSize);
-  if (recentItems.length === 0) return [];
-  return recentItems
-    .filter((item) => !item.classification_status || item.classification_status === 'pending')
-    .slice(0, limit);
+  const rows = await fetchSupabaseRows<
+    Omit<NewsRawRecord, 'source_type' | 'ingestion_provider'> & { source_type: string; ingestion_provider: string | null }
+  >(
+    `news-raw-pending-${limit}`,
+    `news_raw?select=id,source_name,source_type,ingestion_provider,title,body,summary,url,author,published_at,scraped_at,language_code,classification_status,classified_at,raw,created_at&or=(classification_status.is.null,classification_status.eq.pending)&order=scraped_at.desc&limit=${limit}`
+  );
+
+  return rows
+    .map((row) => {
+      const sourceType = normalizeSourceType(row.source_type);
+      const ingestionProvider = row.ingestion_provider ? normalizeIngestionProvider(row.ingestion_provider) : null;
+      if (!sourceType) return null;
+      return { ...row, source_type: sourceType, ingestion_provider: ingestionProvider };
+    })
+    .filter((row): row is NewsRawRecord => row !== null);
 }
 
 export async function replacePipelineNewsRawCategories(

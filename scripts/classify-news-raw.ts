@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   }
 
   await classifyPendingNewsRaw(safeLimit);
-  console.log(`Classified up to ${safeLimit} pending news_raw rows`);
+  console.log(`Classified all pending news_raw rows in batches of ${safeLimit}`);
 }
 
 main().catch((error) => {

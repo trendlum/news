@@ -74,8 +74,12 @@ export async function classifyRecentNewsRaw(limit = 50): Promise<void> {
 }
 
 export async function classifyPendingNewsRaw(limit = 50): Promise<void> {
-  const items = await getPendingNewsRaw(limit);
-  for (const item of items) {
-    await classifyNewsRawItem(item.id);
+  while (true) {
+    const items = await getPendingNewsRaw(limit);
+    if (items.length === 0) return;
+
+    for (const item of items) {
+      await classifyNewsRawItem(item.id);
+    }
   }
 }
