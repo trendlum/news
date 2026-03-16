@@ -16,7 +16,7 @@ on:
 
 concurrency:
   group: fetch-all-news-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   fetch-all:
