@@ -8,11 +8,6 @@ on:
         required: true
         default: true
         type: boolean
-      persist_taxonomy:
-        description: 'Persist taxonomy after fetch'
-        required: true
-        default: true
-        type: boolean
 
 concurrency:
   group: fetch-all-news-${{ github.ref }}
@@ -41,10 +36,9 @@ jobs:
       - name: Public safety check
         run: npm run check:public
 
-      - name: Fetch all categories
+      - name: Fetch all news
         env:
           INGEST_NEWS_RAW: ${{ inputs.ingest_news_raw }}
-          PERSIST_TAXONOMY: ${{ inputs.persist_taxonomy }}
           FAIL_ON_EMPTY_RESULTS: 'false'
           MIN_FETCHED_ITEMS: '0'
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

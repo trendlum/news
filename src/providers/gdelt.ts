@@ -1,9 +1,8 @@
 import { fetchWithProxy } from '../config/http';
-import { getDomainKeywordConfig } from '../data/event-taxonomy';
+import { getSearchQueryConfig } from '../data/search-query-config';
 import { getActiveGdeltDomains } from '../data/news-sources';
-import type { FetchOptions, NewsCategory, NewsItem } from '../types';
+import type { FetchOptions, NewsItem } from '../types';
 import { toId } from '../utils/hash';
-import { classifyDocumentTaxonomy } from '../utils/taxonomy-score';
 
 interface GdeltArticle {
   title?: string;
@@ -75,7 +74,7 @@ function parseGdeltDate(input: string): number {
   return Number.isNaN(parsed) ? Date.now() : parsed;
 }
 
-function toNewsItem(article: GdeltArticle, category: NewsCategory, index: number): NewsItem {
+function toNewsItem(article: GdeltArticle, index: number): NewsItem {
   const title = (article.title || '').trim();
   const link = (article.url || '').trim();
   const pubDate = (article.seendate || '').trim();
@@ -83,29 +82,22 @@ function toNewsItem(article: GdeltArticle, category: NewsCategory, index: number
   const source = (article.domain || 'GDELT').trim();
 
   return {
-    id: `gdelt-${toId([category, link, pubDate, String(index)])}`,
+    id: `gdelt-${toId([link, pubDate, String(index)])}`,
     title,
     link,
     source,
     description: '',
     pubDate,
     timestamp,
-    category,
     provider: 'gdelt'
   };
 }
 
-export async function fetchFromGdelt(
-  category: NewsCategory,
-  options?: FetchOptions
-): Promise<NewsItem[]> {
-  const keywordConfig = await getDomainKeywordConfig(category).catch(() => null);
-  if (!keywordConfig || keywordConfig.gdeltKeywordRules.length === 0) return [];
+export async function fetchFromGdelt(options?: FetchOptions): Promise<NewsItem[]> {
+  const queryConfig = await getSearchQueryConfig().catch(() => null);
+  if (!queryConfig || queryConfig.gdeltKeywordRules.length === 0) return [];
 
-  const keywordGroups = chunk(
-    uniqueKeywords(keywordConfig.gdeltKeywordRules.map((rule) => rule.keyword)),
-    GDELT_KEYWORD_CHUNK_SIZE
-  );
+  const keywordGroups = chunk(uniqueKeywords(queryConfig.gdeltKeywordRules.map((rule) => rule.keyword)), GDELT_KEYWORD_CHUNK_SIZE);
   const domains = await getActiveGdeltDomains().catch(() => []);
   const domainGroups = domains.length > 0 ? chunk(domains, GDELT_DOMAIN_CHUNK_SIZE) : [[]];
   const merged: NewsItem[] = [];
@@ -115,8 +107,7 @@ export async function fetchFromGdelt(
       const query = `(${keywords.map((keyword) => toGdeltTerm(keyword)).join(' OR ')})`;
 
       for (const group of domainGroups) {
-        const domainFilter =
-          group.length > 0 ? ` (${group.map((domain) => `domain:${domain}`).join(' OR ')})` : '';
+        const domainFilter = group.length > 0 ? ` (${group.map((domain) => `domain:${domain}`).join(' OR ')})` : '';
         const fullQuery = `${query}${domainFilter} sourcelang:english`;
         const url =
           'https://api.gdeltproject.org/api/v2/doc/doc?' +
@@ -140,7 +131,7 @@ export async function fetchFromGdelt(
           const raw = (await response.json()) as GdeltResponse;
           const articles = raw.articles || [];
           const newsItems = articles
-            .map((item, index) => toNewsItem(item, category, merged.length + index))
+            .map((item, index) => toNewsItem(item, merged.length + index))
             .filter((item) => item.title && item.link);
           merged.push(...newsItems);
           break;
@@ -148,19 +139,7 @@ export async function fetchFromGdelt(
       }
     }
 
-    return merged.flatMap((item) => {
-      const taxonomy = classifyDocumentTaxonomy(
-        {
-          title: item.title,
-          summary: item.description || '',
-          body: item.body || ''
-        },
-        keywordConfig,
-        'gdelt'
-      );
-      if (!taxonomy.assigned) return [];
-      return [{ ...item, taxonomy }];
-    });
+    return merged;
   } catch {
     return [];
   }

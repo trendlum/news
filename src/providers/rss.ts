@@ -1,9 +1,7 @@
 import { fetchTextWithProxy } from '../config/http';
-import { getDomainKeywordConfig } from '../data/event-taxonomy';
 import { getActiveRssFeeds } from '../data/news-sources';
-import type { FeedSource, FetchOptions, NewsCategory, NewsItem } from '../types';
+import type { FeedSource, FetchOptions, NewsItem } from '../types';
 import { toId } from '../utils/hash';
-import { classifyDocumentTaxonomy } from '../utils/taxonomy-score';
 import { cleanXmlValue } from '../utils/text';
 
 function extractTag(block: string, tag: string): string {
@@ -34,13 +32,7 @@ function parseDate(raw: string): number {
   return Number.isNaN(value) ? Date.now() : value;
 }
 
-function toNewsItem(
-  block: string,
-  category: NewsCategory,
-  feed: FeedSource,
-  index: number,
-  isAtom: boolean
-): NewsItem | null {
+function toNewsItem(block: string, feed: FeedSource, index: number, isAtom: boolean): NewsItem | null {
   const title = extractTag(block, 'title');
   const link = isAtom ? extractLinkFromAtom(block) : extractTag(block, 'link');
   const description = extractTag(block, 'description') || extractTag(block, 'summary');
@@ -55,7 +47,7 @@ function toNewsItem(
   if (!title || !link) return null;
 
   return {
-    id: `rss-${toId([category, feed.name, link, String(index)])}`,
+    id: `rss-${toId([feed.name, link, String(index)])}`,
     title,
     link,
     source: feed.name,
@@ -63,16 +55,11 @@ function toNewsItem(
     body,
     pubDate,
     timestamp,
-    category,
     provider: 'rss'
   };
 }
 
-export async function fetchFromSingleRssFeed(
-  category: NewsCategory,
-  feed: FeedSource,
-  options?: FetchOptions
-): Promise<NewsItem[]> {
+export async function fetchFromSingleRssFeed(feed: FeedSource, options?: FetchOptions): Promise<NewsItem[]> {
   try {
     const xml = await fetchTextWithProxy(feed.url, {
       useProxy: options?.useProxy,
@@ -83,45 +70,24 @@ export async function fetchFromSingleRssFeed(
     const atomBlocks = itemBlocks.length === 0 ? parseItems(xml, 'entry') : [];
     const isAtom = itemBlocks.length === 0;
     const blocks = isAtom ? atomBlocks : itemBlocks;
-    const items = blocks
-      .map((block, index) => toNewsItem(block, category, feed, index, isAtom))
+    return blocks
+      .map((block, index) => toNewsItem(block, feed, index, isAtom))
       .filter((item): item is NewsItem => item !== null);
-    return items;
   } catch {
     return [];
   }
 }
 
-export async function fetchFromRssCategory(
-  category: NewsCategory,
-  options?: FetchOptions
-): Promise<NewsItem[]> {
-  const keywordConfig = await getDomainKeywordConfig(category).catch(() => null);
-  if (!keywordConfig || keywordConfig.rssKeywordRules.length === 0) return [];
-
+export async function fetchFromRss(options?: FetchOptions): Promise<NewsItem[]> {
   const dynamicFeeds = await getActiveRssFeeds().catch(() => []);
   if (dynamicFeeds.length === 0) return [];
 
-  const settled = await Promise.allSettled(
-    dynamicFeeds.map((feed) => fetchFromSingleRssFeed(category, feed, options))
-  );
-
+  const settled = await Promise.allSettled(dynamicFeeds.map((feed) => fetchFromSingleRssFeed(feed, options)));
   const merged: NewsItem[] = [];
+
   for (const result of settled) {
     if (result.status === 'fulfilled') merged.push(...result.value);
   }
 
-  return merged.flatMap((item) => {
-    const taxonomy = classifyDocumentTaxonomy(
-      {
-        title: item.title,
-        summary: item.description || '',
-        body: item.body || ''
-      },
-      keywordConfig,
-      'rss'
-    );
-    if (!taxonomy.assigned) return [];
-    return [{ ...item, taxonomy }];
-  });
+  return merged;
 }

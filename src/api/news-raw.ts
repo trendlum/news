@@ -1,6 +1,5 @@
 import { upsertFetchedNewsRawItems } from '../data/news-raw';
 import type { NewsItem, NewsRawRecord } from '../types';
-import { classifyNewsRawItem, classifyPendingNewsRaw, classifyRecentNewsRaw } from './news-raw-classification';
 
 const ingestedNewsRawByUrl = new Map<string, NewsRawRecord | null>();
 const inFlightIngestionsByUrl = new Map<string, Promise<NewsRawRecord | null>>();
@@ -68,20 +67,4 @@ export async function ingestNewsRawItems(items: NewsItem[]): Promise<NewsRawReco
   );
   const persistedItems = await Promise.all(dedupedItems.map((item) => ingestNewsRawItem(item)));
   return persistedItems.filter((item): item is NewsRawRecord => item !== null);
-}
-
-export async function ingestAndClassifyNewsRawItem(item: NewsItem): Promise<NewsRawRecord | null> {
-  const persistedItem = await ingestNewsRawItem(item);
-  if (!persistedItem) return null;
-
-  await classifyNewsRawItem(persistedItem.id);
-  return persistedItem;
-}
-
-export async function ingestAndClassifyNewsRawItems(items: NewsItem[]): Promise<NewsRawRecord[]> {
-  const persistedItems = await ingestNewsRawItems(items);
-  for (const item of persistedItems) {
-    await classifyNewsRawItem(item.id);
-  }
-  return persistedItems;
 }

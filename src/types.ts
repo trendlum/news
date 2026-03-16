@@ -1,8 +1,8 @@
-export type NewsCategory = string;
 export type NewsProvider = 'gdelt' | 'rss';
 export type NewsSourceType = 'gdelt' | 'rss' | 'scrape' | 'api';
 export type NewsRawSourceType = 'rss' | 'gdelt' | 'news_api' | 'crawler' | 'manual' | 'other';
 export type NewsRawIngestionProvider = 'rss_direct' | 'gdelt' | 'other';
+export type KeywordMatchType = 'contains' | 'exact' | 'prefix' | 'regex';
 
 export interface NewsItem {
   id: string;
@@ -13,9 +13,7 @@ export interface NewsItem {
   body?: string;
   pubDate: string;
   timestamp: number;
-  category: NewsCategory;
   provider: NewsProvider;
-  taxonomy?: DocumentTaxonomyClassification;
 }
 
 export interface FeedSource {
@@ -45,70 +43,15 @@ export interface NewsRawRecord {
   published_at: string | null;
   scraped_at: string;
   language_code: string | null;
-  classification_status: 'pending' | 'classified' | 'unclassified' | 'error' | null;
-  classified_at: string | null;
   raw: unknown;
   created_at: string;
 }
 
-export interface EventTaxonomyCategoryRecord {
+export interface SearchKeywordRecord {
   id: number;
-  label: string;
-  parent_category_id: number | null;
-  slug: string;
-  category_type: 'domain' | 'topic' | 'event_type';
-  active_for_trendlum: boolean;
-  created_at: string;
-}
-
-export interface EventTaxonomyKeywordRecord {
-  id: number;
-  category_id: number;
+  group_id: number;
   keyword: string;
-  match_type: 'contains' | 'exact' | 'prefix' | 'regex';
-  weight: number;
-  active: boolean;
-  created_at: string;
-}
-
-export interface EventEntityKeywordRecord {
-  id: number;
-  entity_type:
-    | 'country'
-    | 'region'
-    | 'city'
-    | 'waterway'
-    | 'leader'
-    | 'political_party'
-    | 'military'
-    | 'international_organization'
-    | 'central_bank'
-    | 'stock_index'
-    | 'currency'
-    | 'rating_agency'
-    | 'company'
-    | 'bank'
-    | 'commodity'
-    | 'pipeline'
-    | 'port'
-    | 'airport'
-    | 'bridge'
-    | 'canal'
-    | 'data_center'
-    | 'satellite'
-    | 'space_agency'
-    | 'militia'
-    | 'terrorist_group'
-    | 'military_base'
-    | 'disease'
-    | 'virus'
-    | 'vaccine'
-    | 'health_agency'
-    | 'climate_event'
-    | 'natural_disaster';
-  canonical_name: string;
-  keyword: string;
-  match_type: EventTaxonomyKeywordRecord['match_type'];
+  match_type: KeywordMatchType;
   weight: number;
   active: boolean;
   created_at: string;
@@ -116,112 +59,15 @@ export interface EventEntityKeywordRecord {
 
 export interface KeywordRule {
   id: number;
-  categoryId: number;
+  groupId: number;
   keyword: string;
-  matchType: EventTaxonomyKeywordRecord['match_type'];
+  matchType: KeywordMatchType;
   weight: number;
 }
 
-export interface EntityKeywordRule {
-  id: number;
-  entityType: EventEntityKeywordRecord['entity_type'];
-  canonicalName: string;
-  keyword: string;
-  matchType: EventEntityKeywordRecord['match_type'];
-  weight: number;
-}
-
-export interface EventTypeKeywordConfig {
-  category: EventTaxonomyCategoryRecord;
-  parentCategory: EventTaxonomyCategoryRecord | null;
-  rssKeywordRules: KeywordRule[];
+export interface SearchQueryConfig {
   gdeltKeywordRules: KeywordRule[];
-  entityKeywordRules: EntityKeywordRule[];
-}
-
-export interface DomainKeywordConfig {
-  category: EventTaxonomyCategoryRecord;
-  eventTypes: EventTypeKeywordConfig[];
-  rssKeywordRules: KeywordRule[];
-  gdeltKeywordRules: KeywordRule[];
-  entityKeywordRules: EntityKeywordRule[];
-  rssKeywords: string[];
   gdeltKeywords: string[];
-}
-
-export interface TaxonomyKeywordMatch {
-  keywordId: number;
-  keyword: string;
-  matchType: EventTaxonomyKeywordRecord['match_type'];
-  weight: number;
-  effectiveWeight: number;
-  categoryId: number;
-  wasSuppressed: boolean;
-  matchedText: string | null;
-  matchStart: number | null;
-  matchEnd: number | null;
-  sourceField: 'title' | 'summary' | 'body' | null;
-}
-
-export interface DetectedEntityEvidence {
-  entityKeywordId: number;
-  matchedKeyword: string;
-  matchType: EventEntityKeywordRecord['match_type'];
-  weight: number;
-  matchedText: string | null;
-  matchStart: number | null;
-  matchEnd: number | null;
-  sourceField: 'title' | 'summary' | 'body' | null;
-}
-
-export interface DetectedEntity {
-  entityType: EventEntityKeywordRecord['entity_type'];
-  canonicalName: string;
-  totalWeight: number;
-  maxWeight: number;
-  matchCount: number;
-  keywordIds: number[];
-  matchedKeywords: string[];
-  sourceFields: Array<'title' | 'summary' | 'body'>;
-  evidence: DetectedEntityEvidence[];
-}
-
-export interface TaxonomyCategoryScore {
-  categoryId: number;
-  categorySlug: string;
-  categoryLabel: string;
-  rawScore: number;
-  finalScore: number;
-  entitySignalScore: number;
-  detectedEntitiesCount: number;
-  matchedKeywordsCount: number;
-  strongKeywordsCount: number;
-  hasVeryStrongKeyword: boolean;
-  assigned: boolean;
-  matches: TaxonomyKeywordMatch[];
-}
-
-export interface DocumentTaxonomyClassification {
-  primaryCategoryId: number | null;
-  primaryCategorySlug: string | null;
-  domainScore: number;
-  assigned: boolean;
-  detectedEntities: DetectedEntity[];
-  eventTypeScores: TaxonomyCategoryScore[];
-}
-
-export interface DocumentTaxonomyInput {
-  title?: string | null;
-  summary?: string | null;
-  body?: string | null;
-}
-
-export interface NewsRawCategoryAssignment {
-  news_raw_id: number;
-  category_id: number;
-  confidence: number;
-  is_primary: boolean;
-  assigned_by: 'pipeline';
 }
 
 export interface FetchOptions {
@@ -229,5 +75,3 @@ export interface FetchOptions {
   useProxy?: boolean;
   timeoutMs?: number;
 }
-
-export type CategoryNewsMap = Record<string, NewsItem[]>;

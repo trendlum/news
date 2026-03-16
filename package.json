@@ -6,8 +6,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "check:public": "node scripts/check-public-safety.cjs",
-    "run:news": "node --env-file=.env --import tsx scripts/run.ts",
-    "run:news-raw": "node --env-file=.env --import tsx scripts/classify-news-raw.ts"
+    "run:news": "node --env-file=.env --import tsx scripts/run.ts"
   },
   "devDependencies": {
     "@types/jsdom": "^28.0.0",
