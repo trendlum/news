@@ -13,8 +13,6 @@ import { fetchSupabaseRows } from './supabase';
 const TABLE_NAME = 'event_taxonomy_categories';
 const KEYWORDS_TABLE_NAME = 'event_taxonomy_keywords';
 const ENTITY_KEYWORDS_TABLE_NAME = 'event_entity_keywords';
-const MAX_GDELT_KEYWORDS = 8;
-
 function normalizeCategoryType(value: string): EventTaxonomyCategoryRecord['category_type'] | null {
   const normalized = value.trim().toLowerCase();
   if (normalized === 'domain' || normalized === 'topic' || normalized === 'event_type') return normalized;
@@ -73,7 +71,7 @@ export async function getActiveEventTypeKeywordConfigs(): Promise<EventTypeKeywo
       category: eventType,
       parentCategory,
       rssKeywordRules: toKeywordRules(eventKeywords),
-      gdeltKeywordRules: toKeywordRules(eventKeywords.slice(0, MAX_GDELT_KEYWORDS)),
+      gdeltKeywordRules: toKeywordRules(eventKeywords),
       entityKeywordRules
     };
   });
@@ -246,12 +244,12 @@ export async function getDomainKeywordConfig(category: NewsCategory): Promise<Do
       category: eventType,
       parentCategory: domainCategory,
       rssKeywordRules: toKeywordRules(eventKeywords),
-      gdeltKeywordRules: toKeywordRules(eventKeywords.slice(0, MAX_GDELT_KEYWORDS)),
+      gdeltKeywordRules: toKeywordRules(eventKeywords),
       entityKeywordRules
     };
   });
   const rssKeywordRules = toKeywordRules(sortedKeywords);
-  const gdeltKeywordRules = toKeywordRules(sortedKeywords.slice(0, MAX_GDELT_KEYWORDS));
+  const gdeltKeywordRules = toKeywordRules(sortedKeywords);
   const rssKeywords = uniqueKeywords(rssKeywordRules.map((row) => row.keyword));
   const gdeltKeywords = uniqueKeywords(gdeltKeywordRules.map((row) => row.keyword));
 
