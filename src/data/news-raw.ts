@@ -10,6 +10,8 @@ interface NewsRawInsertRow {
   body: string | null;
   summary: string | null;
   url: string;
+  has_media: boolean;
+  media_url: string | null;
   author: string | null;
   published_at: string | null;
   language_code: string | null;
@@ -76,6 +78,8 @@ export async function upsertFetchedNewsRawItems(items: NewsItem[]): Promise<News
     body: item.body || null,
     summary: item.description || null,
     url: item.link,
+    has_media: Boolean(item.mediaUrl),
+    media_url: item.mediaUrl || null,
     author: null,
     published_at: toPublishedAt(item),
     language_code: null,
@@ -86,6 +90,7 @@ export async function upsertFetchedNewsRawItems(items: NewsItem[]): Promise<News
       title: item.title,
       description: item.description || '',
       link: item.link,
+      media_url: item.mediaUrl || null,
       pubDate: item.pubDate,
       timestamp: item.timestamp
     }

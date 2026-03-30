@@ -10,6 +10,38 @@ function extractTag(block: string, tag: string): string {
   return cleanXmlValue(match?.[1] || '');
 }
 
+function extractAttr(block: string, pattern: RegExp): string {
+  const match = block.match(pattern);
+  return cleanXmlValue(match?.[1] || '');
+}
+
+function absolutizeUrl(candidate: string, baseUrl: string): string | null {
+  const value = candidate.trim();
+  if (!value) return null;
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractMediaUrl(block: string, baseUrl: string): string | null {
+  const candidates = [
+    extractAttr(block, /<media:content[^>]*\burl=["']([^"']+)["'][^>]*\/?>/i),
+    extractAttr(block, /<media:thumbnail[^>]*\burl=["']([^"']+)["'][^>]*\/?>/i),
+    extractAttr(block, /<enclosure[^>]*\btype=["'][^"']*image[^"']*["'][^>]*\burl=["']([^"']+)["'][^>]*\/?>/i),
+    extractAttr(block, /<enclosure[^>]*\burl=["']([^"']+)["'][^>]*\btype=["'][^"']*image[^"']*["'][^>]*\/?>/i),
+    extractAttr(block, /<img[^>]*\bsrc=["']([^"']+)["'][^>]*>/i)
+  ];
+
+  for (const candidate of candidates) {
+    const mediaUrl = absolutizeUrl(candidate, baseUrl);
+    if (mediaUrl) return mediaUrl;
+  }
+
+  return null;
+}
+
 function extractLinkFromAtom(block: string): string {
   const hrefMatch = block.match(/<link[^>]*href=["']([^"']+)["'][^>]*\/?>/i);
   if (hrefMatch?.[1]) return hrefMatch[1].trim();
@@ -41,6 +73,7 @@ function toNewsItem(block: string, feed: FeedSource, index: number, isAtom: bool
     extractTag(block, 'content') ||
     extractTag(block, 'media:description') ||
     description;
+  const mediaUrl = extractMediaUrl(block, link || feed.url);
   const pubDate = isAtom ? extractTag(block, 'updated') || extractTag(block, 'published') : extractTag(block, 'pubDate');
   const timestamp = parseDate(pubDate);
 
@@ -53,6 +86,7 @@ function toNewsItem(block: string, feed: FeedSource, index: number, isAtom: bool
     source: feed.name,
     description,
     body,
+    mediaUrl,
     pubDate,
     timestamp,
     provider: 'rss'

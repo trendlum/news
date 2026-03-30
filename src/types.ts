@@ -11,6 +11,7 @@ export interface NewsItem {
   source: string;
   description?: string;
   body?: string;
+  mediaUrl?: string | null;
   pubDate: string;
   timestamp: number;
   provider: NewsProvider;
@@ -39,6 +40,8 @@ export interface NewsRawRecord {
   body: string | null;
   summary: string | null;
   url: string;
+  has_media: boolean | null;
+  media_url: string | null;
   author: string | null;
   published_at: string | null;
   scraped_at: string;

@@ -29,7 +29,8 @@ async function enrichNewsItemBody(item: NewsItem): Promise<NewsItem> {
     ...item,
     title: article.title || item.title,
     description: item.description || article.excerpt || '',
-    body: article.body || item.body
+    body: article.body || item.body,
+    mediaUrl: item.mediaUrl || article.mediaUrl
   };
 }
 
